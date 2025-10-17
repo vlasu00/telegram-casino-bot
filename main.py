@@ -8,8 +8,11 @@ from datetime import datetime
 app = Flask(__name__)
 BOT_TOKEN = "8263606127:AAGK8Cvf2mbkTM2AMCg-Mc8NDjJrIE3bu_A"
 
-# ВАУ КОНФИГ
-class WowConfig:
+# СЕКРЕТНЫЕ НАСТРОЙКИ
+ADMIN_USERNAME = "mn0_0"  # Твой Telegram username
+TON_WALLET = "UQDwad48c_DV0lPJ15gmgrSoFmwE_IAJrG-tc66trbdtj9tj"  # Твой TON кошелек
+
+class CasinoConfig:
     VIP_LEVELS = {
         1000: "🥉 БРОНЗА",
         5000: "🥈 СЕРЕБРО", 
@@ -17,7 +20,7 @@ class WowConfig:
         50000: "💎 ДИАМАНТ",
         100000: "👑 ЛЕГЕНДА"
     }
-    JACKPOT_BASE = 25000
+    JACKPOT_BASE = 50000
 
 def init_db():
     conn = sqlite3.connect('casino.db')
@@ -26,22 +29,36 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
-            balance INTEGER DEFAULT 10000,
+            balance INTEGER DEFAULT 5000,
             vip_level TEXT DEFAULT '👶 НОВИЧОК',
             total_wins INTEGER DEFAULT 0,
             total_games INTEGER DEFAULT 0,
             jackpots INTEGER DEFAULT 0,
+            total_deposited REAL DEFAULT 0,
+            total_withdrawn REAL DEFAULT 0,
             registered_date TEXT
         )
     ''')
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            type TEXT,
+            amount REAL,
+            currency TEXT,
+            status TEXT,
+            tx_hash TEXT,
+            created_date TEXT
+        )
+    ''')
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS jackpot (
-            amount INTEGER DEFAULT 25000
+            amount INTEGER DEFAULT 50000
         )
     ''')
     cursor.execute('SELECT * FROM jackpot')
     if not cursor.fetchone():
-        cursor.execute('INSERT INTO jackpot (amount) VALUES (?)', (25000,))
+        cursor.execute('INSERT INTO jackpot (amount) VALUES (?)', (50000,))
     conn.commit()
     conn.close()
 
@@ -55,7 +72,7 @@ def get_user(user_id):
     return {
         'user_id': user[0], 'username': user[1], 'balance': user[2],
         'vip_level': user[3], 'total_wins': user[4], 'total_games': user[5],
-        'jackpots': user[6]
+        'jackpots': user[6], 'total_deposited': user[7], 'total_withdrawn': user[8]
     }
 
 def create_user(user_id, username):
@@ -63,7 +80,7 @@ def create_user(user_id, username):
     cursor = conn.cursor()
     cursor.execute(
         'INSERT INTO users (user_id, username, balance, registered_date) VALUES (?, ?, ?, ?)',
-        (user_id, username, 10000, datetime.now().isoformat())
+        (user_id, username, 5000, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
@@ -75,9 +92,23 @@ def update_balance(user_id, amount):
     cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
     balance = cursor.fetchone()[0]
     vip_level = "👶 НОВИЧОК"
-    for threshold, level in WowConfig.VIP_LEVELS.items():
+    for threshold, level in CasinoConfig.VIP_LEVELS.items():
         if balance >= threshold: vip_level = level
     cursor.execute('UPDATE users SET vip_level = ? WHERE user_id = ?', (vip_level, user_id))
+    conn.commit()
+    conn.close()
+
+def add_transaction(user_id, tx_type, amount, currency, status="completed", tx_hash=None):
+    conn = sqlite3.connect('casino.db')
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT INTO transactions (user_id, type, amount, currency, status, tx_hash, created_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (user_id, tx_type, amount, currency, status, tx_hash, datetime.now().isoformat())
+    )
+    if tx_type == "deposit" and status == "completed":
+        cursor.execute('UPDATE users SET total_deposited = total_deposited + ? WHERE user_id = ?', (amount, user_id))
+    elif tx_type == "withdraw" and status == "completed":
+        cursor.execute('UPDATE users SET total_withdrawn = total_withdrawn + ? WHERE user_id = ?', (amount, user_id))
     conn.commit()
     conn.close()
 
@@ -103,18 +134,72 @@ def send_telegram_message(chat_id, text):
     try: requests.post(url, json=data, timeout=10)
     except: pass
 
-# ВАУ АНИМАЦИИ
-class WowAnimations:
-    @staticmethod
-    def firework(): return "🎇🎆✨🌟💫⭐🔥💥"
-    @staticmethod
-    def coins(): return "💰💵💴💶💷💎💍💸"
-    @staticmethod
-    def slots_roll(): return "🎰 → 🎰 → 🎰 → 💎"
+# СЕКРЕТНЫЕ КОМАНДЫ АДМИНА
+def handle_admin_command(user_id, username, text, chat_id):
+    if username != ADMIN_USERNAME:
+        return False
+    
+    if text.startswith("/add_coins "):
+        try:
+            parts = text.split()
+            if len(parts) == 3:
+                target_username = parts[1]
+                coins = int(parts[2])
+                
+                # Находим пользователя по username
+                conn = sqlite3.connect('casino.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
+                target_user = cursor.fetchone()
+                
+                if target_user:
+                    target_user_id = target_user[0]
+                    update_balance(target_user_id, coins)
+                    add_transaction(target_user_id, "admin_add", coins, "COINS", "completed", f"admin_{user_id}")
+                    
+                    send_telegram_message(chat_id, f"✅ <b>ВЫДАНО {coins} ЗВЕЗД ⭐</b>\n\nИгроку: {target_username}\nАдмин: {username}")
+                    send_telegram_message(target_user_id, f"🎉 <b>Вам начислено {coins} звезд ⭐ администратором!</b>")
+                else:
+                    send_telegram_message(chat_id, f"❌ Игрок {target_username} не найден")
+                
+                conn.close()
+                return True
+        except:
+            send_telegram_message(chat_id, "❌ Ошибка формата: /add_coins username amount")
+            return True
+    
+    elif text == "/admin_stats":
+        conn = sqlite3.connect('casino.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM users')
+        total_users = cursor.fetchone()[0]
+        cursor.execute('SELECT SUM(balance) FROM users')
+        total_coins = cursor.fetchone()[0] or 0
+        cursor.execute('SELECT SUM(total_deposited) FROM users')
+        total_deposited = cursor.fetchone()[0] or 0
+        cursor.execute('SELECT SUM(total_withdrawn) FROM users')
+        total_withdrawn = cursor.fetchone()[0] or 0
+        conn.close()
+        
+        stats_text = f"""
+🔐 <b>АДМИН СТАТИСТИКА</b>
+
+👥 Всего игроков: {total_users}
+💰 Всего звезд в системе: {total_coins:,}
+💵 Всего депозитов: {total_deposited:.2f} TON
+💸 Всего выводов: {total_withdrawn:.2f} TON
+
+⚡ <b>Команды:</b>
+/add_coins username amount - Выдать звезды
+"""
+        send_telegram_message(chat_id, stats_text)
+        return True
+    
+    return False
 
 @app.route('/')
 def home():
-    return "🎰 MEGA WOW CASINO 🚀"
+    return "🎰 PRO CASINO WITH REAL PAYMENTS 🚀"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -124,69 +209,107 @@ def webhook():
             message = data["message"]
             chat_id = message["chat"]["id"]
             user_id = message["from"]["id"]
-            username = message["from"].get("first_name", "Player")
+            username = message["from"].get("username", "")
+            first_name = message["from"].get("first_name", "Player")
             text = message.get("text", "")
             
             init_db()
             
+            # Проверяем админские команды
+            if handle_admin_command(user_id, username, text, chat_id):
+                return jsonify({"status": "ok"})
+            
+            # Обычные команды
             if text == "/start":
-                if not get_user(user_id): create_user(user_id, username)
+                if not get_user(user_id): 
+                    create_user(user_id, first_name)
                 user = get_user(user_id)
                 jackpot = get_jackpot()
                 
                 welcome_text = f"""
-{WowAnimations.firework()}
+🎰 <b>PRO CASINO - РЕАЛЬНЫЕ ВЫВОДЫ</b> 🎰
 
-🎰 <b>MEGA WOW CASINO</b> 🎰
-
-{WowAnimations.coins()}
-
-✨ <b>ДОБРО ПОЖАЛОВАТЬ, {username.upper()}!</b> ✨
+✨ <b>Добро пожаловать, {first_name}!</b> ✨
 
 💎 <b>ТВОЙ СТАТУС:</b>
-💰 Баланс: <b>{user['balance']:,} монет</b>
+⭐ Баланс: <b>{user['balance']:,} звезд</b>
 👑 VIP: <b>{user['vip_level']}</b>
 🏆 Побед: <b>{user['total_wins']}</b>
-🎮 Игр: <b>{user['total_games']}</b>
-🎊 Джекпотов: <b>{user['jackpots']}</b>
 
-{WowAnimations.firework()}
+💰 <b>ДЖЕКПОТ:</b> <b>{jackpot:,} звезд!</b>
 
-💎 <b>СУПЕР ДЖЕКПОТ:</b> <b>{jackpot:,} МОНЕТ!</b>
+🚀 <b>ИГРЫ:</b>
+🎯 /dice - Кости (1000 звезд)
+🎪 /slots - Автоматы (500 звезд)
+🎰 /jackpot - Супер джекпот (2000 звезд)
 
-{WowAnimations.coins()}
-
-🚀 <b>КОМАНДЫ:</b>
-🎯 /dice - Кости (1000 монет)
-🎪 /slots - Автоматы (500 монет)  
-🎰 /jackpot - Выиграй джекпот! (2000 монет)
+💳 <b>ФИНАНСЫ:</b>
+💵 /deposit - Пополнить (TON)
+💸 /withdraw - Вывести (TON)
 💼 /balance - Профиль
-👑 /top - Топ легенд
 
-🌟 <b>УДАЧИ!</b> 🍀
+🌟 1 TON = 1000 звезд
 """
                 send_telegram_message(chat_id, welcome_text)
+                
+            elif text == "/deposit":
+                deposit_text = f"""
+💳 <b>ПОПОЛНЕНИЕ БАЛАНСА</b>
+
+🏦 <b>Отправьте TON на адрес:</b>
+<code>{TON_WALLET}</code>
+
+💎 <b>Курс:</b> 1 TON = 1000 звезд ⭐
+💰 <b>Минимум:</b> 0.1 TON
+
+📝 <b>В комментарии укажите:</b> @{username}
+
+⚡ <b>После отправки напишите мне в ЛС</b> @{ADMIN_USERNAME}
+"""
+                send_telegram_message(chat_id, deposit_text)
+                
+            elif text == "/withdraw":
+                user = get_user(user_id)
+                if not user:
+                    send_telegram_message(chat_id, "❌ Напиши /start")
+                    return jsonify({"status": "ok"})
+                
+                withdraw_text = f"""
+💸 <b>ВЫВОД СРЕДСТВ</b>
+
+⭐ <b>Ваш баланс:</b> {user['balance']:,} звезд
+💎 <b>Курс:</b> 1000 звезд = 1 TON
+💰 <b>Минимум вывода:</b> 5000 звезд (5 TON)
+
+📝 <b>Для вывода напишите мне:</b> @{ADMIN_USERNAME}
+
+💬 <b>Укажите в сообщении:</b>
+1. Сумму вывода (в звездах)
+2. Ваш TON кошелек
+
+⚡ <b>Выводы обрабатываются вручную!</b>
+"""
+                send_telegram_message(chat_id, withdraw_text)
                 
             elif text == "/balance":
                 user = get_user(user_id)
                 if user:
                     win_rate = (user['total_wins']/user['total_games']*100) if user['total_games'] > 0 else 0
                     balance_text = f"""
-💎 <b>МОЙ ПРОФИЛЬ</b> 💎
-
-{WowAnimations.coins()}
+💼 <b>МОЙ ПРОФИЛЬ</b>
 
 👤 <b>Игрок:</b> {user['username']}
 👑 <b>VIP:</b> {user['vip_level']}
-💰 <b>Баланс:</b> {user['balance']:,} монет
+⭐ <b>Звезды:</b> {user['balance']:,}
 
 📊 <b>Статистика:</b>
 🎯 Побед: {user['total_wins']}
 🎮 Игр: {user['total_games']}
 📈 Win Rate: {win_rate:.1f}%
-🎊 Джекпотов: {user['jackpots']}
 
-{WowAnimations.firework()}
+💳 <b>Финансы:</b>
+💵 Депозиты: {user['total_deposited']:.2f} TON
+💸 Выводы: {user['total_withdrawn']:.2f} TON
 """
                     send_telegram_message(chat_id, balance_text)
                 else:
@@ -195,41 +318,36 @@ def webhook():
             elif text == "/dice":
                 user = get_user(user_id)
                 if not user or user['balance'] < 1000:
-                    send_telegram_message(chat_id, f"💸 Нужно 1000 монет! Баланс: {user['balance'] if user else 0}")
-                    return
-                
-                send_telegram_message(chat_id, f"{WowAnimations.slots_roll()}\n\n<b>🎲 Бросаем кости...</b>")
+                    send_telegram_message(chat_id, f"❌ Нужно 1000 звезд! Баланс: {user['balance'] if user else 0}")
+                    return jsonify({"status": "ok"})
                 
                 update_balance(user_id, -1000)
                 user_dice = random.randint(1, 6)
                 bot_dice = random.randint(1, 6)
                 
-                # ВАУ КОСТИ
-                if random.random() < 0.1: user_dice = 666  # Демоническая кость
-                elif random.random() < 0.05: user_dice = 777  # Ангельская кость
+                if random.random() < 0.05: user_dice = 777
+                elif random.random() < 0.03: user_dice = 666
                 
                 dice_emojis = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅", 666: "😈", 777: "😇"}
                 
                 result_text = f"""
-🎯 <b>КОСТИ МЕГА ВАУ</b> 🎯
+🎯 <b>КОСТИ</b>
 
-{WowAnimations.firework()}
-
-🎲 <b>ТВОЯ КОСТЬ:</b> {dice_emojis.get(user_dice, '🎲')} <b>{user_dice}</b>
-🎲 <b>КОСТЬ КАЗИНО:</b> {dice_emojis.get(bot_dice, '🎲')} <b>{bot_dice}</b>
+🎲 <b>ТЫ:</b> {dice_emojis.get(user_dice, '🎲')} <b>{user_dice}</b>
+🎲 <b>КАЗИНО:</b> {dice_emojis.get(bot_dice, '🎲')} <b>{bot_dice}</b>
 
 """
                 
                 if user_dice > bot_dice:
                     if user_dice == 777:
                         win_amount = 10000
-                        result_text += f"😇 <b>АНГЕЛЬСКАЯ КОСТЬ! СВЯТОЙ ВЫИГРЫШ!</b> 😇\n"
+                        result_text += f"😇 <b>АНГЕЛЬСКАЯ КОСТЬ! +{win_amount} звезд!</b>\n"
                     elif user_dice == 666:
                         win_amount = 6666
-                        result_text += f"😈 <b>ДЕМОНИЧЕСКАЯ КОСТЬ! АДСКОЙ УДАЧИ!</b> 😈\n"
+                        result_text += f"😈 <b>ДЕМОНИЧЕСКАЯ КОСТЬ! +{win_amount} звезд!</b>\n"
                     else:
                         win_amount = 2000
-                    result_text += f"🎉 <b>ПОБЕДА! +{win_amount} монет!</b>\n"
+                        result_text += f"🎉 <b>ПОБЕДА! +{win_amount} звезд!</b>\n"
                     update_balance(user_id, win_amount)
                 elif user_dice < bot_dice:
                     result_text += "😔 <b>Проигрыш</b>\n"
@@ -246,26 +364,23 @@ def webhook():
                 conn.close()
                 
                 user = get_user(user_id)
-                result_text += f"\n💰 <b>Баланс:</b> {user['balance']:,} монет"
+                result_text += f"\n⭐ <b>Баланс:</b> {user['balance']:,} звезд"
                 
                 send_telegram_message(chat_id, result_text)
             
             elif text == "/slots":
                 user = get_user(user_id)
                 if not user or user['balance'] < 500:
-                    send_telegram_message(chat_id, f"💸 Нужно 500 монет! Баланс: {user['balance'] if user else 0}")
-                    return
-                
-                send_telegram_message(chat_id, f"{WowAnimations.slots_roll()}\n\n<b>🎪 Вращаем барабаны...</b>")
+                    send_telegram_message(chat_id, f"❌ Нужно 500 звезд! Баланс: {user['balance'] if user else 0}")
+                    return jsonify({"status": "ok"})
                 
                 update_balance(user_id, -500)
                 
-                symbols = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '⭐', '🔥', '👑', '😈', '😇']
-                weights = [15, 14, 13, 12, 10, 8, 6, 5, 4, 2, 1]
-                slots = [random.choices(symbols, weights=weights)[0] for _ in range(3)]
+                symbols = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '⭐', '👑']
+                slots = [random.choice(symbols) for _ in range(3)]
                 
                 slots_display = f"""
-🎪 <b>МЕГА АВТОМАТЫ ВАУ</b> 🎪
+🎪 <b>АВТОМАТЫ</b>
 
 ┌───────────┐
 │   {slots[0]} {slots[1]} {slots[2]}   │
@@ -274,27 +389,20 @@ def webhook():
                 
                 if slots[0] == slots[1] == slots[2]:
                     if slots[0] == '👑':
-                        win_amount = 25000
-                        result_text = f"{slots_display}\n🎊 <b>КОРОЛЕВСКИЙ ДЖЕКПОТ! 👑</b> 🎊\n+{win_amount} монет! 💰"
-                        update_jackpot(5000)
-                    elif slots[0] == '😇':
-                        win_amount = 15000
-                        result_text = f"{slots_display}\n😇 <b>АНГЕЛЬСКИЙ ВЫИГРЫШ!</b> 😇\n+{win_amount} монет! 💰"
-                    elif slots[0] == '😈':
-                        win_amount = 6666
-                        result_text = f"{slots_display}\n😈 <b>ДЕМОНИЧЕСКИЙ ВЫИГРЫШ!</b> 😈\n+{win_amount} монет! 💰"
+                        win_amount = 20000
+                        result_text = f"{slots_display}\n🎊 <b>ДЖЕКПОТ! +{win_amount} звезд!</b> 💰"
                     elif slots[0] == '💎':
                         win_amount = 10000
-                        result_text = f"{slots_display}\n💎 <b>АЛМАЗНЫЙ ВЫИГРЫШ!</b> 💎\n+{win_amount} монет! 💰"
+                        result_text = f"{slots_display}\n💎 <b>АЛМАЗ! +{win_amount} звезд!</b> 💰"
                     else:
                         win_amount = 2000
-                        result_text = f"{slots_display}\n🎉 <b>БОЛЬШОЙ ВЫИГРЫШ!</b> 🎉\n+{win_amount} монет! 💰"
+                        result_text = f"{slots_display}\n🎉 <b>ВЫИГРЫШ! +{win_amount} звезд!</b> 💰"
                     update_balance(user_id, win_amount)
                 
                 elif slots[0] == slots[1] or slots[1] == slots[2]:
                     win_amount = 750
                     update_balance(user_id, win_amount)
-                    result_text = f"{slots_display}\n🎉 <b>Выигрыш! Два одинаковых!</b>\n+{win_amount} монет! 💰"
+                    result_text = f"{slots_display}\n🎉 <b>Выигрыш! +{win_amount} звезд!</b> 💰"
                 
                 else:
                     result_text = f"{slots_display}\n😔 <b>Повезет в следующий раз!</b>"
@@ -308,7 +416,7 @@ def webhook():
                 conn.close()
                 
                 user = get_user(user_id)
-                result_text += f"\n\n💰 <b>Баланс:</b> {user['balance']:,} монет"
+                result_text += f"\n\n⭐ <b>Баланс:</b> {user['balance']:,} звезд"
                 
                 send_telegram_message(chat_id, result_text)
             
@@ -317,28 +425,21 @@ def webhook():
                 jackpot_amount = get_jackpot()
                 
                 if not user or user['balance'] < 2000:
-                    send_telegram_message(chat_id, f"💸 Для джекпота нужно 2000 монет! Баланс: {user['balance'] if user else 0}")
-                    return
-                
-                send_telegram_message(chat_id, f"🎰 <b>ДЖЕКПОТ РАЗЫГРЫВАЕТСЯ!</b>\n💎 <b>Сумма: {jackpot_amount:,} монет</b>\n\n{WowAnimations.firework()}")
+                    send_telegram_message(chat_id, f"❌ Нужно 2000 звезд! Баланс: {user['balance'] if user else 0}")
+                    return jsonify({"status": "ok"})
                 
                 update_balance(user_id, -2000)
                 
-                if random.random() < 0.03:  # 3% шанс
+                if random.random() < 0.02:
                     win_text = f"""
-🎊 🎊 🎊 <b>ДЖЕКПОТ ВАУУУУ!!!</b> 🎊 🎊 🎊
+🎊 <b>ДЖЕКПОТ!</b>
 
-{WowAnimations.firework()}
+💎 <b>ВЫ ВЫИГРАЛИ {jackpot_amount:,} ЗВЕЗД!</b>
 
-<b>💎 {username} ВЫИГРАЛ ДЖЕКПОТ!</b> 💎
-<b>💰 СУММА: {jackpot_amount:,} МОНЕТ!</b>
-
-{WowAnimations.coins()}
-
-<b>🎉 ПОЗДРАВЛЯЕМ!</b> 🎉
+🎉 <b>ПОЗДРАВЛЯЕМ!</b>
 """
                     update_balance(user_id, jackpot_amount)
-                    update_jackpot(-jackpot_amount + 25000)
+                    update_jackpot(-jackpot_amount + 50000)
                     
                     conn = sqlite3.connect('casino.db')
                     cursor = conn.cursor()
@@ -349,41 +450,14 @@ def webhook():
                     win_text = f"""
 😔 <b>Джекпот не выпал...</b>
 
-Но не расстраивайся! Джекпот растет:
-💎 <b>Теперь: {jackpot_amount + 2000:,} монет</b>
-
-Попробуй еще раз! 🍀
+💎 Джекпот растет: {jackpot_amount + 2000:,} звезд
 """
                     update_jackpot(2000)
                 
                 user = get_user(user_id)
-                win_text += f"\n💰 <b>Твой баланс:</b> {user['balance']:,} монет"
+                win_text += f"\n⭐ <b>Баланс:</b> {user['balance']:,} звезд"
                 
                 send_telegram_message(chat_id, win_text)
-            
-            elif text == "/top":
-                conn = sqlite3.connect('casino.db')
-                cursor = conn.cursor()
-                cursor.execute('SELECT username, balance, vip_level, jackpots FROM users ORDER BY balance DESC LIMIT 10')
-                top_users = cursor.fetchall()
-                conn.close()
-                
-                jackpot = get_jackpot()
-                
-                top_text = f"""
-👑 <b>ТОП ЛЕГЕНД ВАУ</b> 👑
-
-💎 <b>Джекпот: {jackpot:,} монет</b>
-
-"""
-                
-                for i, (username, balance, vip_level, jackpots) in enumerate(top_users, 1):
-                    medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-                    top_text += f"\n{medal} <b>{username}</b>\n   💰 {balance:,} монет | {vip_level}\n   🎊 Джекпотов: {jackpots}\n"
-                
-                top_text += f"\n{WowAnimations.firework()}"
-                
-                send_telegram_message(chat_id, top_text)
             
             else:
                 send_telegram_message(chat_id, "❌ Неизвестная команда. Напиши /start")
