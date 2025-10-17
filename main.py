@@ -9,8 +9,7 @@ import threading
 app = Flask(__name__)
 BOT_TOKEN = "8263606127:AAGK8Cvf2mbkTM2AMCg-Mc8NDjJrIE3bu_A"
 
-# СЕКРЕТНЫЕ НАСТРОЙКИ
-ADMIN_USERNAME = "nm0_0"  # Твой правильный юзер
+ADMIN_USERNAME = "nm0_0"
 TON_WALLET = "UQDwad48c_DV0lPJ15gmgrSoFmwE_IAJrG-tc66trbdtj9tj"
 
 class CasinoConfig:
@@ -27,21 +26,38 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 5000,
-            vip_level TEXT DEFAULT '👶 НОВИЧОК', total_wins INTEGER DEFAULT 0,
-            total_games INTEGER DEFAULT 0, jackpots INTEGER DEFAULT 0,
-            total_deposited REAL DEFAULT 0, total_withdrawn REAL DEFAULT 0,
-            registered_date TEXT, last_daily_bonus TEXT, referral_code TEXT UNIQUE,
-            referred_by INTEGER, referral_bonus INTEGER DEFAULT 0,
-            level INTEGER DEFAULT 1, experience INTEGER DEFAULT 0,
-            last_login TEXT, is_vip BOOLEAN DEFAULT FALSE, vip_until TEXT,
-            hidden_balance INTEGER DEFAULT 0  # СЕКРЕТНЫЙ БАЛАНС
+            user_id INTEGER PRIMARY KEY, 
+            username TEXT, 
+            balance INTEGER DEFAULT 5000,
+            vip_level TEXT DEFAULT '👶 НОВИЧОК', 
+            total_wins INTEGER DEFAULT 0,
+            total_games INTEGER DEFAULT 0, 
+            jackpots INTEGER DEFAULT 0,
+            total_deposited REAL DEFAULT 0, 
+            total_withdrawn REAL DEFAULT 0,
+            registered_date TEXT, 
+            last_daily_bonus TEXT, 
+            referral_code TEXT UNIQUE,
+            referred_by INTEGER, 
+            referral_bonus INTEGER DEFAULT 0,
+            level INTEGER DEFAULT 1, 
+            experience INTEGER DEFAULT 0,
+            last_login TEXT, 
+            is_vip BOOLEAN DEFAULT FALSE, 
+            vip_until TEXT,
+            hidden_balance INTEGER DEFAULT 0
         )
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, type TEXT,
-            amount REAL, currency TEXT, status TEXT, tx_hash TEXT, created_date TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            user_id INTEGER, 
+            type TEXT,
+            amount REAL, 
+            currency TEXT, 
+            status TEXT, 
+            tx_hash TEXT, 
+            created_date TEXT
         )
     ''')
     cursor.execute('CREATE TABLE IF NOT EXISTS jackpot (amount INTEGER DEFAULT 50000)')
@@ -175,7 +191,6 @@ def send_telegram_message(chat_id, text):
     except: 
         pass
 
-# АНИМАЦИИ ДЛЯ ИГР
 def send_dice_animation(chat_id, steps=5):
     animations = ["🎲 Бросаем кости...", "🎲 Кости летят...", "🎲 Почти видим...", "🎲 Результат..."]
     for anim in animations:
@@ -201,11 +216,9 @@ def send_jackpot_animation(chat_id):
         send_telegram_message(chat_id, anim)
         time.sleep(1)
 
-# СУПЕР СЕКРЕТНЫЕ АДМИН КОМАНДЫ
 def handle_admin_command(user_id, username, text, chat_id):
     if username != ADMIN_USERNAME: return False
     
-    # Обычные админ команды
     if text.startswith("/add_coins "):
         try:
             parts = text.split()
@@ -280,7 +293,6 @@ def handle_admin_command(user_id, username, text, chat_id):
             return True
         except: pass
     
-    # СЕКРЕТНЫЕ КОМАНДЫ
     elif text.startswith("/god_mode "):
         state = text.split()[1].lower()
         if state in ['on', 'off']:
