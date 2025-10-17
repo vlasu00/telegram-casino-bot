@@ -10,7 +10,7 @@ app = Flask(__name__)
 BOT_TOKEN = "8263606127:AAGK8Cvf2mbkTM2AMCg-Mc8NDjJrIE3bu_A"
 
 # СЕКРЕТНЫЕ НАСТРОЙКИ
-ADMIN_USERNAME = "mn0_0"
+ADMIN_USERNAME = "nm0_0"
 TON_WALLET = "UQDwad48c_DV0lPJ15gmgrSoFmwE_IAJrG-tc66trbdtj9tj"
 
 class CasinoConfig:
@@ -319,7 +319,7 @@ def webhook():
                 send_telegram_message(chat_id, f"🎁 Ежедневный бонус: {bonus} звезд!")
                 
             elif text == "/pay":
-                send_telegram_message(chat_id, "💸 <b>Перевод звезд:</b>\n<code>/pay username amount</code>\n\nПример: <code>/pay mn0_0 1000</code>")
+                send_telegram_message(chat_id, "💸 <b>Перевод звезд:</b>\n<code>/pay username amount</code>\n\nПример: <code>/pay nm0_0 1000</code>")
                 
             elif text == "/balance":
                 user = get_user(user_id)
