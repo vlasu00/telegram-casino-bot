@@ -67,8 +67,6 @@ def init_db():
     cursor.execute('INSERT OR IGNORE INTO jackpot (amount) VALUES (?)', (50000,))
     cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', 
                   ('double_deposit_active', 'false'))
-    cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', 
-                  ('free_spins_active', 'false'))
     cursor.execute('INSERT OR IGNORE INTO admin_secrets (key, value) VALUES (?, ?)', 
                   ('god_mode', 'false'))
     cursor.execute('INSERT OR IGNORE INTO admin_secrets (key, value) VALUES (?, ?)', 
@@ -191,50 +189,66 @@ def send_telegram_message(chat_id, text):
     except: 
         pass
 
-def send_dice_animation(chat_id, steps=5):
+def send_dice_animation(chat_id):
     animations = ["🎲 Бросаем кости...", "🎲 Кости летят...", "🎲 Почти видим...", "🎲 Результат..."]
     for anim in animations:
         send_telegram_message(chat_id, anim)
         time.sleep(0.8)
 
-def send_slots_animation(chat_id, steps=8):
+def send_slots_animation(chat_id):
     symbols = ['🍒','🍋','🍊','🍇','🔔','💎','⭐','👑']
-    for i in range(steps):
+    for i in range(5):
         spinning = [random.choice(symbols) for _ in range(3)]
         send_telegram_message(chat_id, f"🎪 Крутим...\n┌───┐\n│ {' '.join(spinning)} │\n└───┘")
         time.sleep(0.5)
 
 def send_jackpot_animation(chat_id):
-    animations = [
-        "💰 Джекпот крутится...",
-        "💰 Сумма растет...", 
-        "💰 Почти угадали...",
-        "💰 СЕКУНДОЧКУ...",
-        "💰 РЕЗУЛЬТАТ..."
-    ]
+    animations = ["💰 Джекпот крутится...", "💰 Сумма растет...", "💰 Почти угадали...", "💰 СЕКУНДОЧКУ...", "💰 РЕЗУЛЬТАТ..."]
     for anim in animations:
         send_telegram_message(chat_id, anim)
         time.sleep(1)
 
+def send_roulette_animation(chat_id):
+    numbers = ["0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"]
+    for i in range(6):
+        spinning = [random.choice(numbers) for _ in range(3)]
+        send_telegram_message(chat_id, f"🎡 Крутим рулетку...\n┌─────┐\n│ {' '.join(spinning)} │\n└─────┘")
+        time.sleep(0.6)
+
 def handle_admin_command(user_id, username, text, chat_id):
-    if username != ADMIN_USERNAME: return False
+    if username != ADMIN_USERNAME: 
+        return False
     
+    # ФИКС: Команда добавления звезд
     if text.startswith("/add_coins "):
         try:
             parts = text.split()
-            target_username, coins = parts[1], int(parts[2])
-            conn = sqlite3.connect('casino.db')
-            cursor = conn.cursor()
-            cursor.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
-            target_user = cursor.fetchone()
-            if target_user:
-                update_balance(target_user[0], coins)
-                send_telegram_message(chat_id, f"✅ Выдано {coins} звезд игроку {target_username}")
-                send_telegram_message(target_user[0], f"🎉 Вам начислено {coins} звезд админом!")
-            conn.close()
+            if len(parts) >= 3:
+                target_username = parts[1]
+                coins = int(parts[2])
+                
+                conn = sqlite3.connect('casino.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
+                target_user = cursor.fetchone()
+                
+                if target_user:
+                    target_user_id = target_user[0]
+                    update_balance(target_user_id, coins)
+                    add_transaction(target_user_id, "admin_add", coins, "COINS", "completed", f"admin_{user_id}")
+                    
+                    send_telegram_message(chat_id, f"✅ <b>ВЫДАНО {coins} ЗВЕЗД ⭐</b>\n\nИгроку: {target_username}\nАдмин: {username}")
+                    send_telegram_message(target_user_id, f"🎉 <b>Вам начислено {coins} звезд ⭐ администратором!</b>")
+                else:
+                    send_telegram_message(chat_id, f"❌ Игрок {target_username} не найден")
+                
+                conn.close()
+                return True
+        except Exception as e:
+            send_telegram_message(chat_id, f"❌ Ошибка: {str(e)}")
             return True
-        except: pass
     
+    # ФИКС: Статистика админа
     elif text == "/admin_stats":
         conn = sqlite3.connect('casino.db')
         cursor = conn.cursor()
@@ -242,6 +256,10 @@ def handle_admin_command(user_id, username, text, chat_id):
         total_users = cursor.fetchone()[0]
         cursor.execute('SELECT SUM(balance) FROM users')
         total_coins = cursor.fetchone()[0] or 0
+        cursor.execute('SELECT SUM(total_deposited) FROM users')
+        total_deposited = cursor.fetchone()[0] or 0
+        cursor.execute('SELECT SUM(total_withdrawn) FROM users')
+        total_withdrawn = cursor.fetchone()[0] or 0
         cursor.execute('SELECT SUM(hidden_balance) FROM users')
         total_hidden = cursor.fetchone()[0] or 0
         conn.close()
@@ -249,10 +267,12 @@ def handle_admin_command(user_id, username, text, chat_id):
         stats_text = f"""
 🔐 <b>СУПЕР АДМИН СТАТИСТИКА</b>
 
-👥 Игроков: {total_users}
-💰 Звезд в системе: {total_coins:,}
+👥 Всего игроков: {total_users}
+💰 Всего звезд в системе: {total_coins:,}
 🕶️ Секретных звезд: {total_hidden:,}
-🎰 Джекпот: {get_jackpot():,}
+💵 Всего депозитов: {total_deposited:.2f} TON
+💸 Всего выводов: {total_withdrawn:.2f} TON
+🎰 Джекпот: {get_jackpot():,} звезд
 
 ⚡ <b>СЕКРЕТНЫЕ КОМАНДЫ:</b>
 /god_mode on/off - Режим бога
@@ -265,19 +285,40 @@ def handle_admin_command(user_id, username, text, chat_id):
         send_telegram_message(chat_id, stats_text)
         return True
     
+    # ФИКС: Топ игроков
+    elif text == "/top_players":
+        conn = sqlite3.connect('casino.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT username, balance, vip_level FROM users ORDER BY balance DESC LIMIT 10')
+        top_players = cursor.fetchall()
+        conn.close()
+        
+        top_text = "🏆 <b>ТОП-10 ИГРОКОВ</b>\n\n"
+        for i, (username, balance, vip) in enumerate(top_players, 1):
+            top_text += f"{i}. {username} - {balance:,} ⭐ {vip}\n"
+        
+        send_telegram_message(chat_id, top_text)
+        return True
+    
+    # ФИКС: Глобальная рассылка
     elif text.startswith("/global_message "):
         message = text.replace("/global_message ", "")
         conn = sqlite3.connect('casino.db')
         cursor = conn.cursor()
         cursor.execute('SELECT user_id FROM users')
         users = cursor.fetchall()
-        for user in users:
-            send_telegram_message(user[0], f"📢 <b>ОТ АДМИНИСТРАЦИИ:</b>\n\n{message}")
-            time.sleep(0.1)
         conn.close()
-        send_telegram_message(chat_id, "✅ Рассылка отправлена")
+        
+        sent = 0
+        for user in users:
+            if send_telegram_message(user[0], f"📢 <b>ОТ АДМИНИСТРАЦИИ:</b>\n\n{message}"):
+                sent += 1
+            time.sleep(0.1)
+        
+        send_telegram_message(chat_id, f"✅ Рассылка отправлена {sent} пользователям")
         return True
     
+    # ФИКС: Денежный дождь
     elif text.startswith("/money_rain "):
         try:
             amount = int(text.split()[1])
@@ -285,14 +326,19 @@ def handle_admin_command(user_id, username, text, chat_id):
             cursor = conn.cursor()
             cursor.execute('SELECT user_id FROM users')
             users = cursor.fetchall()
+            
             for user in users:
                 update_balance(user[0], amount)
                 send_telegram_message(user[0], f"🌧️ <b>ДЕНЕЖНЫЙ ДОЖДЬ!</b>\n\n+{amount} звезд от администрации! 💰")
+            
             conn.close()
-            send_telegram_message(chat_id, f"✅ Дождь {amount} звезд для всех!")
+            send_telegram_message(chat_id, f"✅ Денежный дождь {amount} звезд для всех игроков!")
             return True
-        except: pass
+        except Exception as e:
+            send_telegram_message(chat_id, f"❌ Ошибка: {str(e)}")
+            return True
     
+    # Секретные команды
     elif text.startswith("/god_mode "):
         state = text.split()[1].lower()
         if state in ['on', 'off']:
@@ -317,12 +363,14 @@ def handle_admin_command(user_id, username, text, chat_id):
             cursor = conn.cursor()
             cursor.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
             target_user = cursor.fetchone()
+            
             if target_user:
                 update_hidden_balance(target_user[0], coins)
                 send_telegram_message(chat_id, f"🕶️ <b>СЕКРЕТНО:</b> {coins} звезд игроку {target_username}")
             conn.close()
             return True
-        except: pass
+        except: 
+            return False
     
     elif text == "/hidden_balance":
         user = get_user(user_id)
@@ -342,7 +390,8 @@ def handle_admin_command(user_id, username, text, chat_id):
             conn.close()
             send_telegram_message(chat_id, f"🕶️ <b>СЕКРЕТНЫЙ ДОЖДЬ:</b> {amount} звезд для всех!")
             return True
-        except: pass
+        except: 
+            return False
     
     elif text == "/system_wipe":
         send_telegram_message(chat_id, "💀 <b>ОПАСНАЯ КОМАНДА!</b>\n\nДля подтверждения введи: /confirm_wipe")
@@ -365,32 +414,46 @@ def handle_star_payment(user_id, username, text, chat_id):
     if text.startswith("/pay "):
         try:
             parts = text.split()
-            target_username, amount = parts[1], int(parts[2])
-            user = get_user(user_id)
-            if not user or user['balance'] < amount:
-                send_telegram_message(chat_id, f"❌ Недостаточно звезд! Баланс: {user['balance'] if user else 0}")
-                return True
-            if amount < 100:
-                send_telegram_message(chat_id, "❌ Минимум 100 звезд")
-                return True
-            
-            conn = sqlite3.connect('casino.db')
-            cursor = conn.cursor()
-            cursor.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
-            target_user = cursor.fetchone()
-            
-            if target_user and target_user[0] != user_id:
-                update_balance(user_id, -amount)
-                update_balance(target_user[0], amount)
-                commission = amount // 20
-                admin_user = get_user_by_username(ADMIN_USERNAME)
-                if admin_user: update_balance(admin_user['user_id'], commission)
+            if len(parts) >= 3:
+                target_username = parts[1]
+                amount = int(parts[2])
                 
-                send_telegram_message(chat_id, f"✅ Перевод {amount} звезд игроку {target_username}")
-                send_telegram_message(target_user[0], f"🎉 Вам перевели {amount} звезд от {username}")
-            conn.close()
+                user = get_user(user_id)
+                if not user or user['balance'] < amount:
+                    send_telegram_message(chat_id, f"❌ Недостаточно звезд! Баланс: {user['balance'] if user else 0}")
+                    return True
+                
+                if amount < 100:
+                    send_telegram_message(chat_id, "❌ Минимальная сумма перевода: 100 звезд")
+                    return True
+                
+                conn = sqlite3.connect('casino.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
+                target_user = cursor.fetchone()
+                
+                if target_user and target_user[0] != user_id:
+                    update_balance(user_id, -amount)
+                    update_balance(target_user[0], amount)
+                    
+                    commission = amount // 20
+                    admin_user = get_user_by_username(ADMIN_USERNAME)
+                    if admin_user:
+                        update_balance(admin_user['user_id'], commission)
+                    
+                    send_telegram_message(chat_id, f"✅ <b>Перевод выполнен!</b>\n\n👤 Получатель: {target_username}\n💫 Сумма: {amount} звезд\n📊 Комиссия: {commission} звезд\n\n⭐ Новый баланс: {user['balance'] - amount}")
+                    send_telegram_message(target_user[0], f"🎉 <b>Вам перевели {amount} звезд!</b>\n\n👤 От: {username}\n💫 Сумма: {amount} звезд")
+                    
+                elif target_user and target_user[0] == user_id:
+                    send_telegram_message(chat_id, "❌ Нельзя переводить себе!")
+                else:
+                    send_telegram_message(chat_id, f"❌ Игрок {target_username} не найден")
+                
+                conn.close()
+                return True
+        except Exception as e:
+            send_telegram_message(chat_id, f"❌ Ошибка перевода: {str(e)}")
             return True
-        except: pass
     return False
 
 def get_user_by_username(username):
@@ -433,30 +496,41 @@ def webhook():
                 return jsonify({"status": "ok"})
             
             if text == "/start":
-                if not get_user(user_id): create_user(user_id, first_name)
+                if not get_user(user_id): 
+                    create_user(user_id, first_name)
                 user = get_user(user_id)
+                jackpot = get_jackpot()
+                
                 welcome_text = f"""
-🎰 <b>PRO CASINO</b> 🎰
+🎰 <b>PRO CASINO - РЕАЛЬНЫЕ ВЫВОДЫ</b> 🎰
 
-👋 <b>Добро пожаловать, {first_name}!</b>
+✨ <b>Добро пожаловать, {first_name}!</b> ✨
 
+💎 <b>ТВОЙ СТАТУС:</b>
 ⭐ Баланс: <b>{user['balance']:,} звезд</b>
 👑 VIP: <b>{user['vip_level']}</b>
+🏆 Побед: <b>{user['total_wins']}</b>
 🎯 Уровень: <b>{user['level']}</b>
 
-🎮 <b>Игры:</b>
-🎯 /dice - Кости (1000⭐)
-🎪 /slots - Автоматы (500⭐)  
-🎰 /jackpot - Джекпот (2000⭐)
+💰 <b>ДЖЕКПОТ:</b> <b>{jackpot:,} звезд!</b>
 
-💫 <b>Бонусы:</b>
+🚀 <b>ИГРЫ:</b>
+🎯 /dice - Кости (1000 звезд)
+🎪 /slots - Автоматы (500 звезд)
+🎰 /jackpot - Супер джекпот (2000 звезд)
+🎡 /roulette - Рулетка (1500 звезд)
+
+💫 <b>БОНУСЫ:</b>
 🎁 /daily - Ежедневный бонус
-💸 /pay - Перевод звезд
+👥 /referral - Реферальная система
+💸 /pay - Перевести звезды
+📊 /stats - Статистика игроков
 
 💳 <b>ФИНАНСЫ:</b>
-💵 /deposit - Пополнить баланс
-💸 /withdraw - Вывести средства  
+💵 /deposit - Пополнить (TON)
+💸 /withdraw - Вывести (TON)
 💼 /balance - Профиль
+📈 /analytics - Финансовая аналитика
 
 🌟 1 TON = 1000 звезд
 """
@@ -480,48 +554,213 @@ def webhook():
 """
                 send_telegram_message(chat_id, deposit_text)
                 
+            elif text == "/withdraw":
+                user = get_user(user_id)
+                if not user:
+                    send_telegram_message(chat_id, "❌ Напиши /start")
+                    return jsonify({"status": "ok"})
+                
+                if user['balance'] < 5000:
+                    send_telegram_message(chat_id, f"❌ Минимум для вывода 5000 звезд! Ваш баланс: {user['balance']:,}")
+                    return jsonify({"status": "ok"})
+                
+                withdraw_text = f"""
+💸 <b>ВЫВОД СРЕДСТВ</b>
+
+⭐ <b>Ваш баланс:</b> {user['balance']:,} звезд
+💎 <b>Курс:</b> 1000 звезд = 1 TON
+💰 <b>Минимум вывода:</b> 5000 звезд (5 TON)
+
+📝 <b>Для вывода напишите:</b> @{ADMIN_USERNAME}
+
+💬 <b>Укажите в сообщении:</b>
+1. Сумму вывода (в звездах)
+2. Ваш TON кошелек
+
+⚡ <b>Выводы обрабатываются вручную в течение 24 часов!</b>
+"""
+                send_telegram_message(chat_id, withdraw_text)
+                
             elif text == "/daily":
                 user = get_user(user_id)
-                if not user: return jsonify({"status": "ok"})
+                if not user:
+                    send_telegram_message(chat_id, "❌ Напиши /start")
+                    return jsonify({"status": "ok"})
+                
                 today = datetime.now().date().isoformat()
                 if user['last_daily_bonus'] == today:
-                    send_telegram_message(chat_id, "❌ Уже получали бонус сегодня!")
+                    send_telegram_message(chat_id, "❌ Сегодняшний бонус уже получен!")
                     return jsonify({"status": "ok"})
+                
                 bonus = random.choice(CasinoConfig.DAILY_BONUS)
                 update_balance(user_id, bonus)
+                
                 conn = sqlite3.connect('casino.db')
                 cursor = conn.cursor()
                 cursor.execute('UPDATE users SET last_daily_bonus = ? WHERE user_id = ?', (today, user_id))
                 conn.commit()
                 conn.close()
-                send_telegram_message(chat_id, f"🎁 <b>Ежедневный бонус: {bonus} звезд!</b>")
+                
+                daily_text = f"""
+🎁 <b>ЕЖЕДНЕВНЫЙ БОНУС</b>
+
+💰 <b>Вы получили: {bonus} звезд!</b>
+
+💫 Заходите завтра за новым бонусом!
+⭐ Баланс: {user['balance'] + bonus:,} звезд
+"""
+                send_telegram_message(chat_id, daily_text)
                 
             elif text == "/pay":
-                send_telegram_message(chat_id, "💸 <b>Перевод звезд:</b>\n<code>/pay username amount</code>\n\nПример: <code>/pay {ADMIN_USERNAME} 1000</code>")
-                
+                pay_text = f"""
+💫 <b>ПЕРЕВОД ЗВЕЗД</b>
+
+📤 <b>Переведите звезды другому игроку:</b>
+
+💎 <b>Формат:</b>
+<code>/pay username amount</code>
+
+🎯 <b>Пример:</b>
+<code>/pay {ADMIN_USERNAME} 1000</code>
+
+📊 <b>Комиссия:</b> 5%
+💰 <b>Минимум:</b> 100 звезд
+
+⚡ <b>Быстро и безопасно!</b>
+"""
+                send_telegram_message(chat_id, pay_text)
+
             elif text == "/balance":
                 user = get_user(user_id)
                 if user:
                     win_rate = (user['total_wins']/user['total_games']*100) if user['total_games'] > 0 else 0
                     balance_text = f"""
-💼 <b>ПРОФИЛЬ</b>
+💼 <b>МОЙ ПРОФИЛЬ</b>
 
-👤 {user['username']}
-👑 {user['vip_level']} 
-⭐ {user['balance']:,} звезд
-🎯 Уровень {user['level']}
+👤 <b>Игрок:</b> {user['username']}
+👑 <b>VIP:</b> {user['vip_level']}
+⭐ <b>Звезды:</b> {user['balance']:,}
+🎯 <b>Уровень:</b> {user['level']}
 
-📊 Статистика:
+📊 <b>Статистика:</b>
 🎯 Побед: {user['total_wins']}
 🎮 Игр: {user['total_games']}
 📈 Win Rate: {win_rate:.1f}%
 
-💳 Финансы:
+💳 <b>Финансы:</b>
 💵 Депозиты: {user['total_deposited']:.2f} TON
 💸 Выводы: {user['total_withdrawn']:.2f} TON
 """
                     send_telegram_message(chat_id, balance_text)
-                    
+                else:
+                    send_telegram_message(chat_id, "❌ Напиши /start")
+
+            elif text == "/stats":
+                conn = sqlite3.connect('casino.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM users')
+                total_users = cursor.fetchone()[0]
+                cursor.execute('SELECT username, balance FROM users ORDER BY balance DESC LIMIT 5')
+                top_players = cursor.fetchall()
+                conn.close()
+                
+                stats_text = f"""
+📊 <b>СТАТИСТИКА КАЗИНО</b>
+
+👥 Всего игроков: {total_users}
+💰 Джекпот: {get_jackpot():,} звезд
+
+🏆 <b>ТОП-5 ИГРОКОВ:</b>
+"""
+                for i, (username, balance) in enumerate(top_players, 1):
+                    stats_text += f"{i}. {username} - {balance:,} ⭐\n"
+                
+                stats_text += "\n🎰 <b>Игры доступны:</b>\n/dice /slots /jackpot /roulette"
+                send_telegram_message(chat_id, stats_text)
+
+            elif text == "/analytics":
+                user = get_user(user_id)
+                if not user:
+                    send_telegram_message(chat_id, "❌ Напиши /start")
+                    return jsonify({"status": "ok"})
+                
+                conn = sqlite3.connect('casino.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM users')
+                total_users = cursor.fetchone()[0]
+                cursor.execute('SELECT SUM(balance) FROM users')
+                total_coins = cursor.fetchone()[0] or 0
+                cursor.execute('SELECT SUM(total_deposited) FROM users')
+                total_deposited = cursor.fetchone()[0] or 0
+                cursor.execute('SELECT SUM(total_withdrawn) FROM users')
+                total_withdrawn = cursor.fetchone()[0] or 0
+                conn.close()
+                
+                analytics_text = f"""
+📈 <b>ФИНАНСОВАЯ АНАЛИТИКА</b>
+
+👥 <b>Общая статистика:</b>
+• Всего игроков: {total_users}
+• Звезд в системе: {total_coins:,}
+• Общие депозиты: {total_deposited:.2f} TON
+• Общие выводы: {total_withdrawn:.2f} TON
+
+💼 <b>Ваша статистика:</b>
+• Ваш баланс: {user['balance']:,} звезд
+• Ваши депозиты: {user['total_deposited']:.2f} TON
+• Ваши выводы: {user['total_withdrawn']:.2f} TON
+• Win Rate: {(user['total_wins']/user['total_games']*100) if user['total_games'] > 0 else 0:.1f}%
+
+💰 <b>Экономика:</b>
+• 1 TON = 1000 звезд
+• Джекпот: {get_jackpot():,} звезд
+"""
+                send_telegram_message(chat_id, analytics_text)
+                
+            elif text == "/roulette":
+                user = get_user(user_id)
+                if not user or user['balance'] < 1500:
+                    send_telegram_message(chat_id, "❌ Нужно 1500 звезд для игры в рулетку!")
+                    return jsonify({"status": "ok"})
+                
+                send_roulette_animation(chat_id)
+                update_balance(user_id, -1500)
+                
+                # Рулетка с числами 0-9
+                winning_number = random.randint(0, 9)
+                user_bet = random.randint(0, 9)  # В будущем можно добавить выбор числа
+                
+                result_text = f"""
+🎡 <b>РУЛЕТКА</b>
+
+🎯 Ваше число: {user_bet}️⃣
+🎯 Выпавшее число: {winning_number}️⃣
+
+"""
+                
+                if user_bet == winning_number:
+                    win = 10000
+                    update_balance(user_id, win)
+                    result_text += f"🎊 <b>ДЖЕКПОТ! УГАДАЛИ ЧИСЛО! +{win} звезд!</b>"
+                elif abs(user_bet - winning_number) <= 1:
+                    win = 3000
+                    update_balance(user_id, win)
+                    result_text += f"🎉 <b>Близко! +{win} звезд!</b>"
+                else:
+                    result_text += "😔 <b>Не угадали</b>"
+                
+                conn = sqlite3.connect('casino.db')
+                cursor = conn.cursor()
+                cursor.execute('UPDATE users SET total_games = total_games + 1 WHERE user_id = ?', (user_id,))
+                if user_bet == winning_number or abs(user_bet - winning_number) <= 1:
+                    cursor.execute('UPDATE users SET total_wins = total_wins + 1 WHERE user_id = ?', (user_id,))
+                conn.commit()
+                conn.close()
+                
+                user = get_user(user_id)
+                result_text += f"\n\n⭐ Баланс: {user['balance']:,} звезд"
+                send_telegram_message(chat_id, result_text)
+                
             elif text == "/dice":
                 user = get_user(user_id)
                 if not user or user['balance'] < 1000:
